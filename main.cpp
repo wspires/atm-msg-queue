@@ -1,3 +1,5 @@
+#include "queue.hpp"
+
 #include <cstdint>
 #include <cstdlib>
 #include <functional>
