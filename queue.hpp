@@ -1,6 +1,7 @@
 #pragma once
 
 #include <condition_variable>
+#include <iostream>
 #include <memory>
 #include <mutex>
 #include <queue>
@@ -430,6 +431,7 @@ public:
         {
             while (true)
             {
+                // Call next function to handle state.
                 (this->*state_)();
             }
         }
@@ -606,6 +608,176 @@ private:
 
     // Currently entered PIN.
     std::string pin_;
+};
+
+
+class bank_machine
+{
+public:
+    bank_machine()
+        : balance_{199} // Default to random amount.
+    {
+    }
+
+    void done()
+    {
+        get_sender().send(close_queue{});
+    }
+
+    void run()
+    {
+        try
+        {
+            while (true)
+            {
+                incoming_.wait()
+                    .handle<verify_pin>(
+                        [&](verify_pin const & msg)
+                        {
+                            if (msg.pin == "1937")
+                            {
+                                msg.atm_queue.send(pin_verified{});
+                            }
+                            else
+                            {
+                                msg.atm_queue.send(pin_incorrect{});
+                            }
+                        })
+                    .handle<withdraw>(
+                        [&](withdraw const & msg)
+                        {
+                            if (balance_ >= msg.amount)
+                            {
+                                msg.atm_queue.send(withdraw_ok{});
+                                balance_ -= msg.amount;
+                            }
+                            else
+                            {
+                                msg.atm_queue.send(withdraw_denied{});
+                            }
+                        })
+                    .handle<get_balance>(
+                        [&](get_balance const & msg)
+                        {
+                            msg.atm_queue.send(balance{balance_});
+                        })
+                    .handle<withdrawal_processed>(
+                        [&](withdrawal_processed const & msg)
+                        {
+                        })
+                    .handle<cancel_withdrawal>(
+                        [&](cancel_withdrawal const & msg)
+                        {
+                        })
+                    ;
+            }
+        }
+        catch (close_queue const &)
+        {
+        }
+    }
+
+    sender get_sender()
+    {
+        return incoming_;
+    }
+
+private:
+    receiver incoming_;
+    unsigned balance_;
+};
+
+
+// User interface state machine
+class interface_machine
+{
+public:
+    void done()
+    {
+        get_sender().send(close_queue{});
+    }
+
+    void run()
+    {
+        try
+        {
+            while (true)
+            {
+                incoming_.wait()
+                    .handle<issue_money>(
+                        [&](issue_money const & msg)
+                        {
+                            std::lock_guard<std::mutex> lock{iom_};
+                            std::cout << "Issuing " << msg.amount << std::endl;
+                        })
+                    .handle<display_insufficient_funds>(
+                        [&](display_insufficient_funds const &)
+                        {
+                            std::lock_guard<std::mutex> lock{iom_};
+                            std::cout << "Insufficient funds" << std::endl;
+                        })
+                    .handle<display_enter_pin>(
+                        [&](display_enter_pin const &)
+                        {
+                            std::lock_guard<std::mutex> lock{iom_};
+                            std::cout << "Please enter your PIN (0-9)" << std::endl;
+                        })
+                    .handle<display_enter_card>(
+                        [&](display_enter_card const &)
+                        {
+                            std::lock_guard<std::mutex> lock{iom_};
+                            std::cout << "Please enter your card (i)" << std::endl;
+                        })
+                    .handle<display_balance>(
+                        [&](display_balance const & msg)
+                        {
+                            std::lock_guard<std::mutex> lock{iom_};
+                            std::cout << "The balance of your account is " << msg.amount << std::endl;
+                        })
+                    .handle<display_withdrawal_options>(
+                        [&](display_withdrawal_options const &)
+                        {
+                            std::lock_guard<std::mutex> lock{iom_};
+                            std::cout << "Withdraw 50? (w) " << std::endl;
+                            std::cout << "Display Balance? (b) " << std::endl;
+                            std::cout << "Cancel? (c) " << std::endl;
+                        })
+                    .handle<display_withdrawal_cancelled>(
+                        [&](display_withdrawal_cancelled const &)
+                        {
+                            std::lock_guard<std::mutex> lock{iom_};
+                            std::cout << "Withdrawal cancelled" << std::endl;
+                        })
+                    .handle<display_pin_incorrect_message>(
+                        [&](display_pin_incorrect_message const &)
+                        {
+                            std::lock_guard<std::mutex> lock{iom_};
+                            std::cout << "PIN incorrect" << std::endl;
+                        })
+                    .handle<eject_card>(
+                        [&](eject_card const &)
+                        {
+                            std::lock_guard<std::mutex> lock{iom_};
+                            std::cout << "Ejecting card" << std::endl;
+                        })
+                    ;
+            }
+        }
+        catch (close_queue const &)
+        {
+        }
+    }
+
+    sender get_sender()
+    {
+        return incoming_;
+    }
+
+private:
+    receiver incoming_;
+
+    // Lock for I/O.
+    std::mutex iom_;
 };
 
 }
